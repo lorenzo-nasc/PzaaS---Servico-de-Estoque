@@ -109,29 +109,7 @@ O valor persistido é uma string JSON no formato:
 
 O node Redis de consulta faz `GET` nessa chave, o Code node interpreta a string JSON e a resposta pública acrescenta unidade e categoria aos ingredientes.
 
-## 5. Fluxo de proteção
-
-Antes de executar a validação do pedido e a baixa de ingredientes, o endpoint de consumo consulta a chave de Chaos no Redis:
-
-```text
-POST /v1/estoque-242251
-→ Redis GET chaos:lorenzo_estoque
-→ Falha 503 ativa?
-   ├── Sim → responde 503 e não altera o estoque
-   └── Não → segue para validação, consulta de estoque e baixa
-```
-
-### Como testar
-
-1. Ative o Chaos Monkey usando `POST /v1/estoque-242251/chaos-monkey` com `{"tipo_falha":503}`.
-2. Faça uma chamada normal de consumo para `POST /v1/estoque-242251`.
-3. Confirme que a resposta é `503` e que nenhuma quantidade foi alterada.
-4. Desative o Chaos com `{"tipo_falha":0}`.
-5. Faça novamente a chamada de consumo e confirme que o fluxo voltou a responder normalmente.
-
-> O Chaos Monkey é usado para demonstrar resiliência: o serviço consumidor deve tratar respostas `503` com ret
-
-## 5.1. Healthcheck
+## 5. Healthcheck
 
 ### GET `/health_242251`
 
