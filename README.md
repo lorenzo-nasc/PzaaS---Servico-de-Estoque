@@ -553,4 +553,176 @@ O corpo enviado ao consumo deve conter `sabor` e `quantidade`, conforme descrito
 - O Logger aceita JSON livre, mas os exemplos desta documentação seguem o contrato recomendado pelo Gateway.
 - A documentação deve ser publicada em uma URL acessível e seu link deve ser colocado no workflow e na planilha da turma, conforme as instruções do projeto [file:2].
 
+## Chaos Monkey — falha controlada 503
 
+O serviço de estoque possui um **Chaos Monkey** para simular uma indisponibilidade controlada. Quando a falha `503` está ativa, o endpoint de consumo interrompe a operação antes de consultar ou alterar o estoque e retorna `503 Service Unavailable`.
+
+A falha é controlada por uma chave separada no Redis:
+
+```text
+Chave do estoque: lorenzoestoque
+Chave do Chaos Monkey: chaos:lorenzoestoque
+```
+
+A chave `chaos:lorenzoestoque` não altera os ingredientes; ela somente define se o serviço de consumo deve ficar indisponível.
+
+### Endpoint de configuração
+
+```http
+POST /webhook/v1/estoque-242251/chaos-monkey
+```
+
+#### Headers obrigatórios
+
+| Header | Valor |
+|---|---|
+| `Content-Type` | `application/json` |
+| `x-api-key` | `turma2026` |
+
+### Ativar falha 503
+
+Envie:
+
+```json
+{
+  "tipo_falha": 503
+}
+```
+
+Quando `tipo_falha` é `503`, o workflow executa:
+
+```text
+Redis Set
+Key: chaos:lorenzoestoque
+Value: 503
+```
+
+Resposta esperada:
+
+```json
+{
+  "status": "CHAOS_ATIVADO",
+  "tipo_falha": 503
+}
+```
+
+### Desativar falha
+
+Envie para o mesmo endpoint:
+
+```json
+{
+  "tipo_falha": 0
+}
+```
+
+O workflow remove a chave de falha:
+
+```text
+Redis Delete
+Key: chaos:lorenzoestoque
+```
+
+Resposta esperada:
+
+```json
+{
+  "status": "CHAOS_DESATIVADO",
+  "tipo_falha": 0
+}
+```
+
+### Validação no consumo
+
+Antes de acessar o estoque real, o endpoint de consumo consulta a chave de Chaos:
+
+```text
+Webhook Consumir (POST)
+→ Valida x-api-key
+→ VERIFICA CHAOS ESTOQUE
+→ CHAOS 503 ATIVO?
+   ├── True  → RETORNA 503 CHAOS
+   └── False → Puxa Estoque Atual
+              → Analisa Receita e Estoque
+              → Tem Estoque?
+```
+
+O node `VERIFICA CHAOS ESTOQUE` utiliza:
+
+```text
+Operation: Get
+Key: chaos:lorenzoestoque
+Property Name: chaos_status
+```
+
+O node `CHAOS 503 ATIVO?` compara:
+
+```javascript
+{{ String($json.chaos_status ?? '').trim() }}
+```
+
+com:
+
+```text
+503
+```
+
+Quando o Chaos Monkey está ativo, o consumo responde:
+
+```http
+HTTP/1.1 503 Service Unavailable
+```
+
+```json
+{
+  "erro": "SERVICO_INDISPONIVEL",
+  "servico": "estoque",
+  "identificacao": "lorenzoestoque",
+  "motivo": "CHAOS_MONKEY",
+  "mensagem": "Serviço de estoque temporariamente indisponível por falha controlada."
+}
+```
+
+Enquanto a falha estiver ativa, os nodes `Puxa Estoque Atual`, `Analisa Receita e Estoque` e `Baixa no Redis` não são executados. Portanto, nenhum ingrediente é consumido durante a indisponibilidade simulada.
+
+### Teste no Postman
+
+Ative a falha:
+
+```http
+POST [https://pzaas.online/webhook/v1/estoque-242251/chaos-monkey](https://pzaas.online/webhook/v1/estoque-242251/chaos-monkey)
+Content-Type: application/json
+x-api-key: turma2026
+```
+
+```json
+{
+  "tipo_falha": 503
+}
+```
+
+Em seguida, tente consumir:
+
+```http
+POST [https://pzaas.online/webhook/v1/estoque-242251](https://pzaas.online/webhook/v1/estoque-242251)
+Content-Type: application/json
+x-api-key: turma2026
+x-pedido-id: pedido-chaos-001
+```
+
+```json
+{
+  "sabor": "mussarela",
+  "quantidade": 1
+}
+```
+
+Resultado esperado: `503 Service Unavailable`.
+
+Para normalizar o serviço, envie:
+
+```json
+{
+  "tipo_falha": 0
+}
+```
